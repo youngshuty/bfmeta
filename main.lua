@@ -746,7 +746,7 @@ local state = {
 
 env.__SanguineNaturalZ = state
 
-local MULTIPLIER = 1.3
+local MULTIPLIER = 1.25
 local DASH_TIME = 0.35
 
 Z.onInput = function(u1, p2, p3, p4)
