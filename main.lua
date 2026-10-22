@@ -750,7 +750,13 @@ local MULTIPLIER = 1.25
 local DASH_TIME = 0.35
 
 local function installSanguine()
-Z.onInput = function(u1, p2, p3, p4)
+local currentOriginal = Z.onInput
+if currentOriginal ~= state.Hooked then
+    originalOnInput = currentOriginal
+end
+
+local hookedOnInput
+hookedOnInput = function(u1, p2, p3, p4)
     if not state.Running then
         return originalOnInput(u1, p2, p3, p4)
     end
@@ -975,22 +981,43 @@ Z.onInput = function(u1, p2, p3, p4)
 
     humanoid.AutoRotate = true
 end
+
+state.Hooked = hookedOnInput
+Z.onInput = hookedOnInput
 end
 
 installSanguine()
 
 state.Connections[#state.Connections + 1] = player.CharacterAdded:Connect(function()
     task.spawn(function()
-        task.wait(1)
-        if not state.Running then return end
-        local ok, newClient = pcall(function()
-            return playerGui:WaitForChild("MovesetModules", 10):WaitForChild("Sanguine Art", 10):WaitForChild("Sanguine Art", 10):WaitForChild("Z", 10):WaitForChild("Client", 10)
-        end)
-        if not ok or not newClient then return end
-        local okRequire, newZ = pcall(require, newClient)
-        if okRequire and newZ then
-            Z = newZ
-            installSanguine()
+        local started = os.clock()
+
+        while state.Running and os.clock() - started < 12 do
+            local ok, newClient = pcall(function()
+                local movesets = playerGui:FindFirstChild("MovesetModules")
+                local first = movesets and movesets:FindFirstChild("Sanguine Art")
+                local second = first and first:FindFirstChild("Sanguine Art")
+                local zFolder = second and second:FindFirstChild("Z")
+                return zFolder and zFolder:FindFirstChild("Client")
+            end)
+
+            if ok and newClient then
+                local okRequire, newZ = pcall(require, newClient)
+
+                if okRequire and type(newZ) == "table" and type(newZ.onInput) == "function" then
+                    if newZ ~= Z or newZ.onInput ~= state.Hooked then
+                        Z = newZ
+
+                        pcall(function()
+                            Client = require(newClient.Parent.Parent.Client)
+                        end)
+
+                        installSanguine()
+                    end
+                end
+            end
+
+            task.wait(0.25)
         end
     end)
 end)
@@ -1002,7 +1029,11 @@ function state:Close()
 
     self.Running = false
 
-    Z.onInput = originalOnInput
+    if Z and Z.onInput == self.Hooked then
+        Z.onInput = originalOnInput
+    end
+
+    self.Hooked = nil
 
     for _, connection in ipairs(self.Connections) do
         pcall(function()
