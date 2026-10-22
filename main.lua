@@ -749,6 +749,7 @@ env.__SanguineNaturalZ = state
 local MULTIPLIER = 1.25
 local DASH_TIME = 0.35
 
+local function installSanguine()
 Z.onInput = function(u1, p2, p3, p4)
     if not state.Running then
         return originalOnInput(u1, p2, p3, p4)
@@ -974,6 +975,25 @@ Z.onInput = function(u1, p2, p3, p4)
 
     humanoid.AutoRotate = true
 end
+end
+
+installSanguine()
+
+state.Connections[#state.Connections + 1] = player.CharacterAdded:Connect(function()
+    task.spawn(function()
+        task.wait(1)
+        if not state.Running then return end
+        local ok, newClient = pcall(function()
+            return playerGui:WaitForChild("MovesetModules", 10):WaitForChild("Sanguine Art", 10):WaitForChild("Sanguine Art", 10):WaitForChild("Z", 10):WaitForChild("Client", 10)
+        end)
+        if not ok or not newClient then return end
+        local okRequire, newZ = pcall(require, newClient)
+        if okRequire and newZ then
+            Z = newZ
+            installSanguine()
+        end
+    end)
+end)
 
 function state:Close()
     if not self.Running then
@@ -1558,4 +1578,3 @@ task.spawn(function()
         task.wait(0.25)
     end
 end)
-
