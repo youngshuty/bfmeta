@@ -57,6 +57,7 @@ local keys = {
 }
 
 local currentKey = 1
+local skillsEnabled = true
 
 local NORMAL_DISTANCE = 10
 local R_WINDOW = 0.050
@@ -148,7 +149,7 @@ local function updateLabel()
         return
     end
 
-    label.Text = keys[currentKey].Name
+    label.Text = skillsEnabled and keys[currentKey].Name or "OFF"
     label.Visible = true
 
     task.delay(0.8, function()
@@ -161,7 +162,7 @@ local function updateLabel()
 end
 
 local function fireSkill()
-    if not state.Running then
+    if not state.Running or not skillsEnabled then
         return
     end
 
@@ -828,6 +829,17 @@ connect(UIS.InputBegan, function(input)
 
     if input.KeyCode == Enum.KeyCode.F then
         lastF = os.clock()
+        return
+    end
+
+    if input.KeyCode == Enum.KeyCode.F6 then
+        skillsEnabled = not skillsEnabled
+
+        lastR = -math.huge
+        lastF = -math.huge
+        lastTrigger = -math.huge
+
+        updateLabel()
         return
     end
 
