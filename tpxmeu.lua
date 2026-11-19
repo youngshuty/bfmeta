@@ -1,47 +1,50 @@
+
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local VIM = game:GetService("VirtualInputManager")
+local RS = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local mouse = player:GetMouse()
-local env = getgenv and getgenv() or _G
+local G = getgenv()
 
-if env.__ThreeSystemsCombined then
-    pcall(function()
-        env.__ThreeSystemsCombined:Close()
-    end)
+for _, name in ipairs({
+    "__GuiGunCursorOnly",
+    "SoruX_V3",
+    "SoruX_V4",
+    "SoruX_V5",
+    "SoruX_V6",
+    "SoruX_V7",
+    "SoruX_V8",
+    "__SoruGuiGunCombined",
+    "SoruPixelV1",
+    "SoruPixelV2"
+}) do
+    local previous = G[name]
+
+    if previous and previous.Stop then
+        pcall(previous.Stop)
+    end
 end
 
-if env.DmgCounterSafe and env.DmgCounterSafe.Stop then
-    pcall(function()
-        env.DmgCounterSafe.Stop()
-    end)
+if not hookmetamethod
+    or not getnamecallmethod
+    or not newcclosure then
+    return
 end
 
-pcall(function()
-    RunService:UnbindFromRenderStep("NativeGunCursor")
-    RunService:UnbindFromRenderStep("DmgCounterSafe")
-end)
+local CommE = RS:WaitForChild("Remotes"):WaitForChild("CommE")
 
 local state = {
-    Running = true,
-    Connections = {},
-    SavedCursor = {},
-    CursorActive = false,
-    OriginalMouseIcon = mouse.Icon,
-    OriginalMouseEnabled = UIS.MouseIconEnabled,
-    Damage = nil
+    active = true,
+    pending = 0,
+    pixelToken = 0,
+    connections = {}
 }
 
-env.__ThreeSystemsCombined = state
-
-local function connect(signal, callback)
-    local connection = signal:Connect(callback)
-    table.insert(state.Connections, connection)
-    return connection
-end
+G.__SoruGuiGunCombined = state
 
 local keys = {
     Enum.KeyCode.X,
@@ -50,38 +53,36 @@ local keys = {
 }
 
 local currentKey = 1
+local displayToken = 0
 
-local NORMAL_DISTANCE = 10
-local R_WINDOW = 0.050
-local R_MIN_DELAY = 0.001
+local originalMouseIconEnabled = UIS.MouseIconEnabled
+local originalMouseIcon = mouse.Icon
 
-local PORTAL_F_WINDOW = 0.7
-local PORTAL_MIN_VELOCITY = 67
-local PORTAL_MAX_VELOCITY = 73
+local GUN_CURSOR = "rbxasset://textures/GunCursor.png"
+local RELOAD_CURSOR = "rbxasset://textures/GunWaitCursor.png"
 
-local TRIGGER_COOLDOWN = 0.08
+local cursorActive = false
+local saved = {}
 
-local lastR = -math.huge
-local lastF = -math.huge
-local lastTrigger = -math.huge
-
-local character
-local root
-local previousPosition
-
-local oldGui = playerGui:FindFirstChild("SoruSkillSelector")
-
-if oldGui then
-    oldGui:Destroy()
+for _, name in ipairs({
+    "SoruSkillSelector",
+    "SoruPixelV2_GUI",
+    "SoruPixelDetector",
+    "SoruX_V8_Status"
+}) do
+    local old = playerGui:FindFirstChild(name)
+    if old then
+        old:Destroy()
+    end
 end
 
-local selectorGui = Instance.new("ScreenGui")
-selectorGui.Name = "SoruSkillSelector"
-selectorGui.ResetOnSpawn = false
-selectorGui.IgnoreGuiInset = true
-selectorGui.DisplayOrder = 999999
-selectorGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
-selectorGui.Parent = playerGui
+local gui = Instance.new("ScreenGui")
+gui.Name = "SoruSkillSelector"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.DisplayOrder = 999999
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+gui.Parent = playerGui
 
 local label = Instance.new("TextLabel")
 label.Name = "SelectedSkill"
@@ -95,35 +96,54 @@ label.TextScaled = true
 label.Font = Enum.Font.GothamBold
 label.Text = ""
 label.Visible = false
-label.ZIndex = 999999
-label.Parent = selectorGui
+label.ZIndex = 100
+label.Parent = gui
 
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 8)
 corner.Parent = label
 
-local displayToken = 0
+local pixelGui = Instance.new("ScreenGui")
+pixelGui.Name = "SoruPixelV2_GUI"
+pixelGui.IgnoreGuiInset = true
+pixelGui.ResetOnSpawn = false
+pixelGui.DisplayOrder = 2147483647
+pixelGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+pixelGui.Parent = playerGui
 
-local function setCharacter(newCharacter)
-    character = newCharacter
-    root = character:WaitForChild("HumanoidRootPart", 10)
+local pixel = Instance.new("Frame")
+pixel.Name = "SoruSignal"
+pixel.Position = UDim2.fromOffset(1919, 270)
+pixel.Size = UDim2.fromOffset(1, 1)
+pixel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+pixel.BackgroundTransparency = 0
+pixel.BorderSizePixel = 0
+pixel.Visible = false
+pixel.ZIndex = 100
+pixel.Parent = pixelGui
 
-    if root then
-        previousPosition = root.Position
-    else
-        previousPosition = nil
+local function showPixel()
+    if not state.active then
+        return
     end
 
-    lastR = -math.huge
-    lastF = -math.huge
-    lastTrigger = -math.huge
+    state.pixelToken += 1
+    local token = state.pixelToken
+
+    pixel.Visible = true
+
+    task.delay(0.5, function()
+        if state.active and token == state.pixelToken then
+            pixel.Visible = false
+        end
+    end)
 end
 
 local function updateLabel()
     displayToken += 1
     local token = displayToken
 
-    if not label.Parent then
+    if not state.active or not label.Parent then
         return
     end
 
@@ -131,7 +151,7 @@ local function updateLabel()
     label.Visible = true
 
     task.delay(0.8, function()
-        if state.Running
+        if state.active
             and token == displayToken
             and label.Parent then
             label.Visible = false
@@ -139,39 +159,13 @@ local function updateLabel()
     end)
 end
 
-local function fireSkill()
-    if not state.Running then
-        return
-    end
-
-    local now = os.clock()
-
-    if now - lastTrigger < TRIGGER_COOLDOWN then
-        return
-    end
-
-    lastTrigger = now
-    lastR = -math.huge
-
-    local key = keys[currentKey]
-
-    pcall(function()
-        VIM:SendKeyEvent(true, key, false, game)
-        VIM:SendKeyEvent(false, key, false, game)
-    end)
-end
-
-local GUN_CURSOR = "rbxasset://textures/GunCursor.png"
-local RELOAD_CURSOR = "rbxasset://textures/GunWaitCursor.png"
-
 local function getGun()
-    local currentCharacter = player.Character
-
-    if not currentCharacter then
+    local character = player.Character
+    if not character then
         return nil
     end
 
-    for _, obj in ipairs(currentCharacter:GetChildren()) do
+    for _, obj in ipairs(character:GetChildren()) do
         if obj:IsA("Tool")
             and string.lower(tostring(obj.ToolTip)) == "gun" then
             return obj
@@ -181,9 +175,7 @@ local function getGun()
     return nil
 end
 
-local function saveProperty(obj, property)
-    local saved = state.SavedCursor
-
+local function save(obj, property)
     if not saved[obj] then
         saved[obj] = {}
     end
@@ -204,23 +196,25 @@ local function hideGuiObject(obj)
         return
     end
 
-    if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
-        saveProperty(obj, "ImageTransparency")
+    if obj:IsA("ImageLabel")
+        or obj:IsA("ImageButton") then
+        save(obj, "ImageTransparency")
         obj.ImageTransparency = 1
     end
 
-    if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-        saveProperty(obj, "TextTransparency")
+    if obj:IsA("TextLabel")
+        or obj:IsA("TextButton") then
+        save(obj, "TextTransparency")
         obj.TextTransparency = 1
     end
 
     if obj:IsA("Frame") then
-        saveProperty(obj, "BackgroundTransparency")
+        save(obj, "BackgroundTransparency")
         obj.BackgroundTransparency = 1
     end
 
     if obj:IsA("UIStroke") then
-        saveProperty(obj, "Transparency")
+        save(obj, "Transparency")
         obj.Transparency = 1
     end
 end
@@ -242,30 +236,30 @@ local function getCustomCursor()
 end
 
 local function getReloadState()
-    local cursorGui = getCustomCursor()
+    local customGui = getCustomCursor()
 
-    if not cursorGui then
+    if not customGui then
         return false
     end
 
     local reloadCursor =
-        cursorGui:FindFirstChild("ReloadCursor", true)
+        customGui:FindFirstChild("ReloadCursor", true)
 
-    return reloadCursor ~= nil
+    return reloadCursor
         and reloadCursor:IsA("GuiObject")
-        and reloadCursor.Visible
+        and reloadCursor.Visible or false
 end
 
 local function suppressBloxCursor()
-    local cursorGui = getCustomCursor()
+    local customGui = getCustomCursor()
 
-    if not cursorGui then
+    if not customGui then
         return
     end
 
-    local cursor = cursorGui:FindFirstChild("Cursor", true)
+    local cursor = customGui:FindFirstChild("Cursor", true)
     local reloadCursor =
-        cursorGui:FindFirstChild("ReloadCursor", true)
+        customGui:FindFirstChild("ReloadCursor", true)
 
     if cursor then
         suppressObject(cursor)
@@ -275,7 +269,7 @@ local function suppressBloxCursor()
         suppressObject(reloadCursor)
     end
 
-    for _, obj in ipairs(cursorGui:GetDescendants()) do
+    for _, obj in ipairs(customGui:GetDescendants()) do
         local name = string.lower(obj.Name)
 
         if name == "bluedot"
@@ -286,15 +280,15 @@ local function suppressBloxCursor()
             suppressObject(obj)
 
             if obj:IsA("GuiObject") then
-                saveProperty(obj, "Visible")
+                save(obj, "Visible")
                 obj.Visible = false
             end
         end
     end
 end
 
-local function restoreCursor()
-    for obj, properties in pairs(state.SavedCursor) do
+local function restore()
+    for obj, properties in pairs(saved) do
         if obj and obj.Parent then
             for property, value in pairs(properties) do
                 pcall(function()
@@ -304,338 +298,143 @@ local function restoreCursor()
         end
     end
 
-    table.clear(state.SavedCursor)
+    table.clear(saved)
 end
 
-local function updateCursor()
-    if not state.Running then
+local function pressSkill()
+    if not state.active then
         return
     end
 
-    local gun = getGun()
+    local key = keys[currentKey]
 
-    if gun then
-        state.CursorActive = true
+    pcall(function()
+        for i = 1, 5 do
+            VIM:SendKeyEvent(true, key, false, game)
+            VIM:SendKeyEvent(false, key, false, game)
+        end
+    end)
+end
 
-        local reloading = getReloadState()
+local RENDER_NAME = "NativeGunCursor"
 
-        suppressBloxCursor()
+pcall(function()
+    RunService:UnbindFromRenderStep(RENDER_NAME)
+end)
 
-        UIS.MouseIconEnabled = true
-        mouse.Icon = reloading and RELOAD_CURSOR or GUN_CURSOR
-    else
-        if state.CursorActive then
-            state.CursorActive = false
-            restoreCursor()
+RunService:BindToRenderStep(
+    RENDER_NAME,
+    Enum.RenderPriority.Last.Value + 2000,
+    function()
+        if not state.active then
+            return
         end
 
-        mouse.Icon = ""
-        suppressBloxCursor()
-    end
-end
+        local gun = getGun()
 
-local MAX_EXTRA_X = 4.5
-local MAX_EXTRA_Y_UP = 2.5
-local MAX_EXTRA_Y_DOWN = 7
-local MAX_EXTRA_ROTATION = 3.5
+        if gun then
+            cursorActive = true
 
-local HORIZONTAL_MULT = 2
-local BASE_WIDTH_SCALE = 0.15
-local MOTION_DURATION = 0.35
+            local reloading = getReloadState()
 
-local damageGui = playerGui
-    :WaitForChild("Main")
-    :WaitForChild("DmgCounter")
+            suppressBloxCursor()
 
-local damage = {
-    Writing = false,
-    OriginalPosition = damageGui.Position,
-    OriginalRotation = damageGui.Rotation,
-    AppliedPosition = nil,
-    AppliedRotation = nil,
-    MotionStart = nil,
-    LastWidth = nil
-}
-
-state.Damage = damage
-
-local function captureDamagePosition()
-    if not state.Running or damage.Writing then
-        return
-    end
-
-    local value = damageGui.Position
-
-    if value ~= damage.AppliedPosition then
-        damage.OriginalPosition = value
-    end
-end
-
-local function captureDamageRotation()
-    if not state.Running or damage.Writing then
-        return
-    end
-
-    local value = damageGui.Rotation
-
-    if value ~= damage.AppliedRotation then
-        damage.OriginalRotation = value
-    end
-end
-
-connect(
-    damageGui:GetPropertyChangedSignal("Position"),
-    captureDamagePosition
-)
-
-connect(
-    damageGui:GetPropertyChangedSignal("Rotation"),
-    captureDamageRotation
-)
-
-local function updateDamage()
-    if not state.Running or not damageGui.Parent then
-        return
-    end
-
-    local parentSize = damageGui.Parent.AbsoluteSize
-
-    if parentSize.X <= 0 or parentSize.Y <= 0 then
-        return
-    end
-
-    local original = damage.OriginalPosition
-
-    local width =
-        damageGui.Size.X.Scale * parentSize.X
-        + damageGui.Size.X.Offset
-
-    local baseWidth = BASE_WIDTH_SCALE * parentSize.X
-
-    local widthDifference = math.abs(width - baseWidth)
-
-    local extraX = math.clamp(
-        widthDifference * HORIZONTAL_MULT,
-        0,
-        MAX_EXTRA_X
-    )
-
-    if widthDifference < 0.5 then
-        extraX = 0
-    end
-
-    if damage.LastWidth == nil then
-        damage.LastWidth = widthDifference
-    end
-
-    if widthDifference > damage.LastWidth + 0.5
-        and damage.MotionStart == nil then
-        damage.MotionStart = os.clock()
-    end
-
-    damage.LastWidth = widthDifference
-
-    local extraY = 0
-    local extraRotation = 0
-
-    if damage.MotionStart then
-        local elapsed = os.clock() - damage.MotionStart
-
-        local progress = math.clamp(
-            elapsed / MOTION_DURATION,
-            0,
-            1
-        )
-
-        if progress >= 1 then
-            damage.MotionStart = nil
+            UIS.MouseIconEnabled = true
+            mouse.Icon = reloading
+                and RELOAD_CURSOR
+                or GUN_CURSOR
         else
-            local wave = -math.sin(progress * math.pi * 2)
-
-            if wave < 0 then
-                extraY = wave * MAX_EXTRA_Y_UP
-            else
-                extraY = wave * MAX_EXTRA_Y_DOWN
+            if cursorActive then
+                cursorActive = false
+                restore()
             end
 
-            extraRotation = wave * MAX_EXTRA_ROTATION
+            mouse.Icon = ""
+            suppressBloxCursor()
         end
     end
+)
 
-    local targetPosition = UDim2.new(
-        original.X.Scale,
-        original.X.Offset - extraX,
-        original.Y.Scale,
-        original.Y.Offset + extraY
-    )
-
-    local targetRotation =
-        damage.OriginalRotation + extraRotation
-
-    damage.Writing = true
-
-    damage.AppliedPosition = targetPosition
-    damage.AppliedRotation = targetRotation
-
-    damageGui.Position = targetPosition
-    damageGui.Rotation = targetRotation
-
-    damage.Writing = false
-end
-
-local function shutdown()
-    if not state.Running then
+local function stop()
+    if not state.active then
         return
     end
 
-    state.Running = false
-    displayToken += 1
+    state.active = false
+    state.pending = 0
+    state.pixelToken += 1
 
-    pcall(function()
-        RunService:UnbindFromRenderStep("NativeGunCursor")
-    end)
-
-    pcall(function()
-        RunService:UnbindFromRenderStep("DmgCounterSafe")
-    end)
-
-    for _, connection in ipairs(state.Connections) do
+    for _, connection in ipairs(state.connections) do
         pcall(function()
             connection:Disconnect()
         end)
     end
 
-    table.clear(state.Connections)
+    table.clear(state.connections)
 
-    for _, key in ipairs(keys) do
-        pcall(function()
-            VIM:SendKeyEvent(false, key, false, game)
-        end)
+    RunService:UnbindFromRenderStep(RENDER_NAME)
+
+    restore()
+
+    mouse.Icon = originalMouseIcon
+    UIS.MouseIconEnabled = originalMouseIconEnabled
+
+    gui:Destroy()
+    pixelGui:Destroy()
+
+    if G.__SoruGuiGunCombined == state then
+        G.__SoruGuiGunCombined = nil
     end
+end
 
-    restoreCursor()
+state.Stop = stop
 
-    pcall(function()
-        mouse.Icon = state.OriginalMouseIcon
-        UIS.MouseIconEnabled = state.OriginalMouseEnabled
-    end)
+local oldNamecall
 
-    pcall(function()
-        if damageGui.Parent then
-            damageGui.Position = damage.OriginalPosition
-            damageGui.Rotation = damage.OriginalRotation
+oldNamecall = hookmetamethod(
+    game,
+    "__namecall",
+    newcclosure(function(self, ...)
+        if state.active
+            and self == CommE
+            and getnamecallmethod() == "FireServer"
+            and select(1, ...) == "Soru" then
+
+            state.pending += 1
         end
+
+        return oldNamecall(self, ...)
     end)
+)
 
-    if selectorGui.Parent then
-        selectorGui:Destroy()
-    end
-
-    if env.__ThreeSystemsCombined == state then
-        env.__ThreeSystemsCombined = nil
-    end
-end
-
-function state:Close()
-    shutdown()
-end
-
-if player.Character then
-    task.spawn(function()
-        setCharacter(player.Character)
-    end)
-end
-
-connect(player.CharacterAdded, function(newCharacter)
-    task.spawn(function()
-        setCharacter(newCharacter)
-    end)
-end)
-
-connect(RunService.Heartbeat, function()
-    if not state.Running or not root or not root.Parent then
-        return
-    end
-
-    if not previousPosition then
-        previousPosition = root.Position
-        return
-    end
-
-    local position = root.Position
-    local distance = (position - previousPosition).Magnitude
-
-    previousPosition = position
-
-    if distance <= NORMAL_DISTANCE then
-        return
-    end
-
-    local now = os.clock()
-    local timeSinceR = now - lastR
-
-    if timeSinceR < R_MIN_DELAY then
-        return
-    end
-
-    if timeSinceR > R_WINDOW then
-        return
-    end
-
-    local timeSinceF = now - lastF
-
-    if timeSinceF <= PORTAL_F_WINDOW then
-        local velocity = root.AssemblyLinearVelocity.Magnitude
-
-        if velocity >= PORTAL_MIN_VELOCITY
-            and velocity <= PORTAL_MAX_VELOCITY then
-            lastF = -math.huge
+state.connections[#state.connections + 1] =
+    RunService.Heartbeat:Connect(function()
+        if not state.active then
             return
         end
-    end
 
-    fireSkill()
-end)
+        if state.pending > 0 then
+            state.pending = 0
 
-connect(UIS.InputBegan, function(input)
-    if not state.Running then
-        return
-    end
+            showPixel()
+            pressSkill()
+        end
+    end)
 
-    if input.KeyCode == Enum.KeyCode.F7 then
-        shutdown()
-        return
-    end
-
-    if input.KeyCode == Enum.KeyCode.R then
-        lastR = os.clock()
-        return
-    end
-
-    if input.KeyCode == Enum.KeyCode.F then
-        lastF = os.clock()
-        return
-    end
-
-    if input.KeyCode == Enum.KeyCode.H then
-        currentKey += 1
-
-        if currentKey > #keys then
-            currentKey = 1
+state.connections[#state.connections + 1] =
+    UIS.InputBegan:Connect(function(input)
+        if input.KeyCode == Enum.KeyCode.F7 then
+            stop()
+            return
         end
 
-        updateLabel()
-    end
-end)
+        if input.KeyCode == Enum.KeyCode.H then
+            currentKey += 1
 
-RunService:BindToRenderStep(
-    "NativeGunCursor",
-    Enum.RenderPriority.Last.Value + 2000,
-    updateCursor
-)
+            if currentKey > #keys then
+                currentKey = 1
+            end
 
-RunService:BindToRenderStep(
-    "DmgCounterSafe",
-    Enum.RenderPriority.Last.Value,
-    updateDamage
-)
+            updateLabel()
+        end
+    end)
